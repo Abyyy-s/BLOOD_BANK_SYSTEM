@@ -8,7 +8,7 @@ import traceback
 app = Flask(__name__)
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = 'Aby26-05-2006'
+app.config['MYSQL_PASSWORD'] = ''
 app.config['MYSQL_DB'] = 'blood_bank_db'
 mysql = MySQL(app)
 CORS(app)
@@ -46,6 +46,22 @@ def requests_page():
 @app.route("/donor_health.html")
 def donor_health_page():
     return render_template("donor_health.html")
+
+
+@app.route("/health", methods=['GET'])
+def health_check():
+    """Quick health check for app and database connectivity."""
+    try:
+        cur = mysql.connection.cursor(DictCursor)
+        cur.execute("SELECT 1 AS ok")
+        db_ok = cur.fetchone()['ok'] == 1
+        cur.close()
+
+        if db_ok:
+            return jsonify({"status": "ok", "database": "connected"}), 200
+        return jsonify({"status": "degraded", "database": "not connected"}), 503
+    except Exception as e:
+        return jsonify({"status": "error", "database": "disconnected", "error": str(e)}), 503
 
 # ==================== DASHBOARD & ANALYTICS ====================
 @app.route("/dashboard", methods=['GET'])
