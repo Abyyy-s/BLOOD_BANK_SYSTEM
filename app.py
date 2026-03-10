@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 from flask_mysqldb import MySQL
 from MySQLdb.cursors import DictCursor
@@ -8,7 +8,7 @@ import traceback
 app = Flask(__name__)
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = ''
+app.config['MYSQL_PASSWORD'] = 'Aby26-05-2006'
 app.config['MYSQL_DB'] = 'blood_bank_db'
 mysql = MySQL(app)
 CORS(app)
@@ -22,46 +22,67 @@ def not_found(e):
 def internal_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
-# ==================== DASHBOARD & ANALYTICS ====================
+# ==================== PAGE ROUTES (HTML) ====================
 @app.route("/")
 def index():
-    return jsonify({"message": "Blood Bank Management System API", "version": "1.0"})
+    return render_template("index.html")
 
+@app.route("/donors.html")
+def donors_page():
+    return render_template("donors.html")
+
+@app.route("/donations.html")
+def donations_page():
+    return render_template("donations.html")
+
+@app.route("/stock.html")
+def stock_page():
+    return render_template("stock.html")
+
+@app.route("/requests.html")
+def requests_page():
+    return render_template("requests.html")
+
+@app.route("/donor_health.html")
+def donor_health_page():
+    return render_template("donor_health.html")
+
+# ==================== DASHBOARD & ANALYTICS ====================
 @app.route("/dashboard", methods=['GET'])
 def get_dashboard():
     try:
         cur = mysql.connection.cursor(DictCursor)
-        
+
         # Total donors
         cur.execute("SELECT COUNT(*) as total FROM donor WHERE is_active = 1")
         total_donors = cur.fetchone()['total']
-        
+
         # Total donations
         cur.execute("SELECT COUNT(*) as total FROM donation")
         total_donations = cur.fetchone()['total']
-        
-        # Blood stock by blood group (aggregate across all banks)
+
+        # Blood stock by blood group
         cur.execute("""
-            SELECT blood_group, SUM(quantity_units) as total_units 
-            FROM blood_stock 
+            SELECT blood_group, SUM(quantity_units) as total_units
+            FROM blood_stock
             GROUP BY blood_group
         """)
         stock_by_group = cur.fetchall()
-        
+
         # Pending requests
         cur.execute("SELECT COUNT(*) as total FROM blood_request WHERE status = 'Pending'")
         pending_requests = cur.fetchone()['total']
-        
+
         # Recent donations (last 7 days)
         cur.execute("""
-            SELECT COUNT(*) as total 
-            FROM donation 
+            SELECT COUNT(*) as total
+            FROM donation
             WHERE donation_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
         """)
         recent_donations = cur.fetchone()['total']
-        
+
         cur.close()
-        
+
         return jsonify({
             "total_donors": total_donors,
             "total_donations": total_donations,
@@ -77,15 +98,14 @@ def get_dashboard():
 def get_donors():
     try:
         cur = mysql.connection.cursor(DictCursor)
-        
-        # Get query parameters for filtering
+
         blood_group = request.args.get('blood_group')
         city = request.args.get('city')
         is_active = request.args.get('is_active')
-        
+
         query = "SELECT donor_id, name, age, gender, blood_group, phone, email, address, city, is_active, donor_type FROM donor WHERE 1=1"
         params = []
-        
+
         if blood_group:
             query += " AND blood_group = %s"
             params.append(blood_group)
@@ -95,7 +115,7 @@ def get_donors():
         if is_active:
             query += " AND is_active = %s"
             params.append(1 if is_active.lower() == 'true' else 0)
-        
+
         cur.execute(query, tuple(params))
         donors = cur.fetchall()
         cur.close()
@@ -123,13 +143,12 @@ def get_donor(donor_id):
 def register_donor():
     try:
         data = request.json
-        
-        # Validation
+
         required_fields = ['name', 'age', 'gender', 'blood_group', 'contact']
         for field in required_fields:
             if field not in data or not data[field]:
                 return jsonify({"error": f"Missing required field: {field}"}), 400
-        
+
         name = data['name']
         age = int(data['age'])
         gender = data['gender']
@@ -140,8 +159,7 @@ def register_donor():
         city = data.get('city', '')
 
         cur = mysql.connection.cursor()
-        
-        # Try with all fields first
+
         try:
             cur.execute(
                 "INSERT INTO donor (name, age, gender, blood_group, phone, address, email, city) "
@@ -149,33 +167,30 @@ def register_donor():
                 (name, age, gender, blood_group, contact, address, email, city)
             )
         except Exception as db_error:
-            # If city column doesn't exist, try without it
-            print(f"First insert failed: {db_error}")
-            print("Trying without city column...")
+            print(f"First insert failed: {db_error}, trying without city...")
             cur.execute(
                 "INSERT INTO donor (name, age, gender, blood_group, phone, address, email) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (name, age, gender, blood_group, contact, address, email)
             )
-        
+
         mysql.connection.commit()
         donor_id = cur.lastrowid
         cur.close()
         return jsonify({"message": "Donor registered successfully", "donor_id": donor_id}), 201
     except Exception as e:
-        print(f"ERROR in register_donor: {str(e)}")
-        print(f"Full traceback: {traceback.format_exc()}")
-        return jsonify({"error": str(e), "details": "Check server console for more information"}), 500
+        print(f"ERROR in register_donor: {traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/donors/<int:donor_id>", methods=['PUT'])
 def update_donor(donor_id):
     try:
         data = request.json
         cur = mysql.connection.cursor()
-        
+
         update_fields = []
         params = []
-        
+
         if 'name' in data:
             update_fields.append("name = %s")
             params.append(data['name'])
@@ -203,19 +218,19 @@ def update_donor(donor_id):
         if 'is_active' in data:
             update_fields.append("is_active = %s")
             params.append(1 if data['is_active'] else 0)
-        
+
         if not update_fields:
             return jsonify({"error": "No fields to update"}), 400
-        
+
         params.append(donor_id)
         query = f"UPDATE donor SET {', '.join(update_fields)} WHERE donor_id = %s"
         cur.execute(query, tuple(params))
         mysql.connection.commit()
-        
+
         if cur.rowcount == 0:
             cur.close()
             return jsonify({"error": "Donor not found"}), 404
-        
+
         cur.close()
         return jsonify({"message": "Donor updated successfully"})
     except Exception as e:
@@ -227,11 +242,11 @@ def delete_donor(donor_id):
         cur = mysql.connection.cursor()
         cur.execute("DELETE FROM donor WHERE donor_id = %s", (donor_id,))
         mysql.connection.commit()
-        
+
         if cur.rowcount == 0:
             cur.close()
             return jsonify({"error": "Donor not found"}), 404
-        
+
         cur.close()
         return jsonify({"message": "Donor deleted successfully"})
     except Exception as e:
@@ -283,18 +298,13 @@ def add_donation():
         data = request.json
         donor_id = data['donor_id']
         bank_id = data['bank_id']
-        screening_id = data.get('screening_id')  # Optional now
+        screening_id = data.get('screening_id') or None
         donation_date = data.get('donation_date', date.today().isoformat())
         component_type = data['component_type']
         quantity_units = int(data['quantity_units'])
         expiry_date = data['expiry_date']
 
         cur = mysql.connection.cursor()
-        
-        # If screening_id is empty or None, insert NULL
-        if not screening_id or screening_id == '':
-            screening_id = None
-        
         cur.execute(
             "INSERT INTO donation (donor_id, bank_id, screening_id, donation_date, component_type, quantity_units, expiry_date) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -305,8 +315,7 @@ def add_donation():
         cur.close()
         return jsonify({"message": "Donation recorded", "donation_id": donation_id}), 201
     except Exception as e:
-        print(f"ERROR in add_donation: {str(e)}")
-        print(f"Full traceback: {traceback.format_exc()}")
+        print(f"ERROR in add_donation: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/donations", methods=['GET'])
@@ -314,10 +323,10 @@ def get_donations():
     try:
         cur = mysql.connection.cursor(DictCursor)
         cur.execute("""
-            SELECT d.*, don.name as donor_name, b.bank_name 
-            FROM donation d 
-            JOIN donor don ON d.donor_id = don.donor_id 
-            JOIN blood_bank b ON d.bank_id = b.bank_id 
+            SELECT d.*, don.name as donor_name, b.bank_name
+            FROM donation d
+            JOIN donor don ON d.donor_id = don.donor_id
+            JOIN blood_bank b ON d.bank_id = b.bank_id
             ORDER BY d.donation_date DESC
         """)
         donations = cur.fetchall()
@@ -331,24 +340,24 @@ def get_donations():
 def get_stock():
     try:
         cur = mysql.connection.cursor(DictCursor)
-        
+
         blood_group = request.args.get('blood_group')
         bank_id = request.args.get('bank_id')
-        
+
         query = """
-            SELECT s.stock_id, s.bank_id, b.bank_name, b.location, s.blood_group, s.quantity_units, s.status 
+            SELECT s.stock_id, s.bank_id, b.bank_name, b.location, s.blood_group, s.quantity_units, s.status
             FROM blood_stock s JOIN blood_bank b ON s.bank_id = b.bank_id
             WHERE 1=1
         """
         params = []
-        
+
         if blood_group:
             query += " AND s.blood_group = %s"
             params.append(blood_group)
         if bank_id:
             query += " AND s.bank_id = %s"
             params.append(bank_id)
-        
+
         cur.execute(query, tuple(params))
         stock = cur.fetchall()
         cur.close()
@@ -374,7 +383,7 @@ def add_hospital():
         data = request.json
         hospital_name = data['hospital_name']
         location = data['location']
-        
+
         cur = mysql.connection.cursor()
         cur.execute(
             "INSERT INTO hospital (hospital_name, location) VALUES (%s, %s)",
@@ -405,7 +414,7 @@ def add_blood_bank():
         data = request.json
         bank_name = data['bank_name']
         location = data['location']
-        
+
         cur = mysql.connection.cursor()
         cur.execute(
             "INSERT INTO blood_bank (bank_name, location) VALUES (%s, %s)",
@@ -423,27 +432,27 @@ def add_blood_bank():
 def list_requests():
     try:
         cur = mysql.connection.cursor(DictCursor)
-        
+
         status = request.args.get('status')
         blood_group = request.args.get('blood_group')
-        
+
         query = """
-            SELECT r.request_id, r.hospital_id, h.hospital_name, h.location, r.blood_group, r.component_type, 
-            r.urgency_level, r.quantity_units, r.status, r.request_date 
+            SELECT r.request_id, r.hospital_id, h.hospital_name, h.location, r.blood_group, r.component_type,
+            r.urgency_level, r.quantity_units, r.status, r.request_date
             FROM blood_request r JOIN hospital h ON r.hospital_id = h.hospital_id
             WHERE 1=1
         """
         params = []
-        
+
         if status:
             query += " AND r.status = %s"
             params.append(status)
         if blood_group:
             query += " AND r.blood_group = %s"
             params.append(blood_group)
-        
+
         query += " ORDER BY r.urgency_level DESC, r.request_date ASC"
-        
+
         cur.execute(query, tuple(params))
         requests_data = cur.fetchall()
         cur.close()
@@ -480,21 +489,21 @@ def update_request(request_id):
     try:
         data = request.json
         status = data.get('status')
-        
+
         if not status:
             return jsonify({"error": "Status is required"}), 400
-        
+
         cur = mysql.connection.cursor()
         cur.execute(
             "UPDATE blood_request SET status = %s WHERE request_id = %s",
             (status, request_id)
         )
         mysql.connection.commit()
-        
+
         if cur.rowcount == 0:
             cur.close()
             return jsonify({"error": "Request not found"}), 404
-        
+
         cur.close()
         return jsonify({"message": "Request updated successfully"})
     except Exception as e:
@@ -506,11 +515,11 @@ def delete_request(request_id):
         cur = mysql.connection.cursor()
         cur.execute("DELETE FROM blood_request WHERE request_id = %s", (request_id,))
         mysql.connection.commit()
-        
+
         if cur.rowcount == 0:
             cur.close()
             return jsonify({"error": "Request not found"}), 404
-        
+
         cur.close()
         return jsonify({"message": "Request deleted successfully"})
     except Exception as e:
@@ -523,8 +532,8 @@ def search_donors():
         search = request.args.get('q', '')
         cur = mysql.connection.cursor(DictCursor)
         cur.execute("""
-            SELECT donor_id, name, age, gender, blood_group, phone, email, city 
-            FROM donor 
+            SELECT donor_id, name, age, gender, blood_group, phone, email, city
+            FROM donor
             WHERE name LIKE %s OR email LIKE %s OR phone LIKE %s
             LIMIT 20
         """, (f"%{search}%", f"%{search}%", f"%{search}%"))
